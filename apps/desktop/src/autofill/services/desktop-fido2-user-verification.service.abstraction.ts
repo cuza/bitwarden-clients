@@ -1,5 +1,9 @@
-/** The step of a passkey ceremony that verification is being performed for. */
-export type Fido2UserVerificationOperation = "registration" | "overwrite" | "assertion";
+/**
+ * The step of a passkey ceremony that verification is being performed for, or
+ * `autofill` for filling a password or one-time code into another app.
+ */
+export type Fido2UserVerificationOperation =
+  "registration" | "overwrite" | "assertion" | "autofill";
 
 export type Fido2UserVerificationRequest = {
   operation: Fido2UserVerificationOperation;

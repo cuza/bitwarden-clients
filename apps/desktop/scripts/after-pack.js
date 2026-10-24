@@ -120,11 +120,16 @@ async function doBuild(context) {
     // Sandbox the proxy and scope it to the App Group on Developer ID builds as well as App Store
     // ones, so both reach the same shared container the app listens on. Without the group the
     // proxy resolves its socket to its own cache directory, which the app cannot see.
+    // A build under any other app ID names its own App Group, so it passes its own entitlements.
     const entitlementsName = PROXY_ENTITLEMENTS[packageId];
-    if (entitlementsName === undefined) {
-      throw new Error(`No desktop_proxy entitlements for app ID '${packageId}'`);
+    const entitlementsPath =
+      process.env.DESKTOP_PROXY_ENTITLEMENTS ??
+      (entitlementsName && path.join(__dirname, "..", "resources", entitlementsName));
+    if (!entitlementsPath) {
+      throw new Error(
+        `No desktop_proxy entitlements for app ID '${packageId}'; set DESKTOP_PROXY_ENTITLEMENTS`,
+      );
     }
-    const entitlementsPath = path.join(__dirname, "..", "resources", entitlementsName);
     child_process.execSync(
       `codesign -s '${id}' -i ${packageId} -f --timestamp --options runtime --entitlements "${entitlementsPath}" "${proxyPath}"`,
     );

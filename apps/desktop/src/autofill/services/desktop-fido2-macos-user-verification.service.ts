@@ -31,6 +31,7 @@ export class DesktopFido2MacOsUserVerificationService extends DesktopFido2UserVe
       registration: "confirmPasskeyRegistrationMfaMacOS",
       overwrite: "confirmPasskeyOverwriteMfaMacOS",
       assertion: "confirmPasskeyAssertionMfaMacOS",
+      autofill: "confirmAutofillLoginMacOS",
     }[operation];
   }
 }

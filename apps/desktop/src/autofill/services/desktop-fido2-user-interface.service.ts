@@ -1,3 +1,4 @@
+import { Dialog } from "@angular/cdk/dialog";
 import { Router } from "@angular/router";
 import {
   firstValueFrom,
@@ -152,6 +153,7 @@ export class DesktopFido2UserInterfaceService implements Fido2UserInterfaceServi
     private userVerificationService: DesktopFido2UserVerificationService,
     private passwordRepromptService: PasswordRepromptService,
     private domainSettingsService: DomainSettingsService,
+    private dialog: Dialog,
   ) {}
   private currentSession: any;
 
@@ -184,6 +186,7 @@ export class DesktopFido2UserInterfaceService implements Fido2UserInterfaceServi
       this.userVerificationService,
       this.passwordRepromptService,
       this.domainSettingsService,
+      this.dialog,
     );
 
     this.currentSession = session;
@@ -204,6 +207,7 @@ export class DesktopFido2UserInterfaceSession implements Fido2UserInterfaceSessi
     private userVerificationService: DesktopFido2UserVerificationService,
     private passwordRepromptService: PasswordRepromptService,
     private domainSettingsService: DomainSettingsService,
+    private dialog: Dialog,
   ) {}
 
   private confirmCredentialSubject = new Subject<boolean>();
@@ -306,6 +310,68 @@ export class DesktopFido2UserInterfaceSession implements Fido2UserInterfaceSessi
   confirmChosenCipher(cipher?: CipherViewLike): void {
     this.chosenCipherSubject.next(cipher);
     this.chosenCipherSubject.complete();
+  }
+
+  /**
+   * Set while the picker is choosing a login to fill into another app rather
+   * than a passkey, so the picker can say so.
+   */
+  loginFill: boolean = false;
+
+  /**
+   * Lets the user choose one of `candidates` to fill into another app, then
+   * verifies them. The picker is skipped when the user already chose the login
+   * in the OS suggestions, unless it needs a master-password reprompt.
+   *
+   * @param candidates The logins the user may choose from.
+   * @param preselected Whether the user already chose the only candidate in the OS.
+   * @param requireUserVerification Whether to verify the user even though the vault is unlocked.
+   * @returns The chosen login, or `undefined` if the user backed out.
+   * @throws {Fido2AuthenticatorError} if the user could not be verified.
+   */
+  async pickLoginToFill<T extends CipherViewLike>(
+    candidates: T[],
+    preselected: boolean,
+    requireUserVerification: boolean,
+  ): Promise<T | undefined> {
+    const abortSignal = this.abortController.signal;
+    try {
+      abortSignal.throwIfAborted();
+
+      let chosen: CipherViewLike | undefined;
+      // A master-password reprompt needs our window on screen, so show the picker for it.
+      if (
+        preselected &&
+        candidates.length === 1 &&
+        candidates[0].reprompt === CipherRepromptType.None
+      ) {
+        chosen = candidates[0];
+      } else {
+        this.loginFill = true;
+        this.availableCipherIdsSubject.next(candidates.map((c) => c.id?.toString() ?? ""));
+        await this.showUi("/fido2-assertion", this.windowObject.windowXy, false);
+        chosen = await this.waitForUiChosenCipher({
+          signal: AbortSignal.any([abortSignal, AbortSignal.timeout(60 * 1000)]),
+        });
+      }
+      const login = candidates.find((c) => chosen != null && c.id === chosen.id);
+      if (!login) {
+        return undefined;
+      }
+
+      const username = CipherViewLikeUtils.getLogin(login)?.username ?? login.name;
+      const verified = await this.verifyUser("autofill", username, requireUserVerification, login, {
+        signal: abortSignal,
+      });
+      if (requireUserVerification && !verified) {
+        throw new Fido2AuthenticatorError(Fido2AuthenticatorErrorCode.NotAllowed);
+      }
+      return login;
+    } catch (error) {
+      throw this.mapUserVerificationCancellation(error);
+    } finally {
+      await this.hideUi();
+    }
   }
 
   /**
@@ -635,6 +701,10 @@ export class DesktopFido2UserInterfaceSession implements Fido2UserInterfaceSessi
   ): Promise<void> {
     // Load the UI:
     await this.desktopSettingsService.setModalMode(true, showTrafficButtons, position);
+    // The modal reuses the app window, so close dialogs open in it, like settings. Drawers,
+    // such as an item being edited, live in the page and come back afterwards. Modal mode is
+    // set first so a dialog can tell it was closed for this and reopen later.
+    this.dialog.closeAll();
     await this.accountService.setShowHeader(showTrafficButtons);
     await this.router.navigate([
       route,

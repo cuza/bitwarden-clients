@@ -1,5 +1,6 @@
 // FIXME: Update this file to be type safe and remove this and next line
 // @ts-strict-ignore
+import { Dialog } from "@angular/cdk/dialog";
 import { APP_INITIALIZER, NgModule } from "@angular/core";
 import { ActivatedRoute, Router } from "@angular/router";
 import { Subject, merge } from "rxjs";
@@ -124,6 +125,7 @@ import { GlobalStateProvider, StateProvider } from "@bitwarden/common/platform/s
 import { SyncService } from "@bitwarden/common/platform/sync";
 import { CipherService as CipherServiceAbstraction } from "@bitwarden/common/vault/abstractions/cipher.service";
 import { FolderService } from "@bitwarden/common/vault/abstractions/folder/folder.service.abstraction";
+import { TotpService } from "@bitwarden/common/vault/abstractions/totp.service";
 import { COPY_CLICK_LISTENER, DialogService, ToastService } from "@bitwarden/components";
 import { GeneratorServicesModule } from "@bitwarden/generator-components";
 import { PasswordGenerationServiceAbstraction } from "@bitwarden/generator-legacy";
@@ -491,6 +493,9 @@ const safeProviders: SafeProvider[] = [
       EnvironmentService,
       PlatformUtilsService,
       DesktopFido2UserInterfaceService,
+      TotpService,
+      BillingAccountProfileStateService,
+      DesktopAutofillSettingsService,
     ],
   }),
   safeProvider({
@@ -525,6 +530,7 @@ const safeProviders: SafeProvider[] = [
       DesktopFido2UserVerificationService,
       PasswordRepromptService,
       DomainSettingsService,
+      Dialog,
     ],
   }),
   safeProvider({

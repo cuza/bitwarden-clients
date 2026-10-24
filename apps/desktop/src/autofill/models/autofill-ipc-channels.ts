@@ -9,6 +9,8 @@
 
 import type { autofill } from "@bitwarden/desktop-napi";
 type LockStatusResponse = autofill.LockStatusResponse;
+type LoginCredentialRequest = autofill.LoginCredentialRequest;
+type LoginCredentialResponse = autofill.LoginCredentialResponse;
 type NativeStatus = autofill.NativeStatus;
 type PasskeyAssertionRequest = autofill.PasskeyAssertionRequest;
 type PasskeyAssertionResponse = autofill.PasskeyAssertionResponse;
@@ -22,6 +24,7 @@ type PasskeyRegistrationRequest = autofill.PasskeyRegistrationRequest;
 export const AutofillIpcChannelIncoming = Object.freeze({
   CancelRequest: "autofill.cancelRequest",
   LockStatus: "autofill.lockStatus",
+  LoginCredential: "autofill.loginCredential",
   NativeStatus: "autofill.nativeStatus",
   PasskeyAssertion: "autofill.passkeyAssertion",
   PasskeyAssertionWithoutUserInterface: "autofill.passkeyAssertionWithoutUserInterface",
@@ -33,6 +36,7 @@ export type AutofillIpcChannelIncoming =
 export const AutofillIpcChannelOutgoing = Object.freeze({
   Error: "autofill.completeError",
   LockStatus: "autofill.completeLockStatus",
+  LoginCredential: "autofill.completeLoginCredential",
   PasskeyAssertion: "autofill.completePasskeyAssertion",
   PasskeyRegistration: "autofill.completePasskeyRegistration",
 } as const);
@@ -70,6 +74,11 @@ export type AutofillIpcDefinitionMap = {
     request: void;
     response: LockStatusResponse;
     outgoing: typeof AutofillIpcChannelOutgoing.LockStatus;
+  };
+  [AutofillIpcChannelIncoming.LoginCredential]: {
+    request: LoginCredentialRequest;
+    response: LoginCredentialResponse;
+    outgoing: typeof AutofillIpcChannelOutgoing.LoginCredential;
   };
   [AutofillIpcChannelIncoming.NativeStatus]: {
     request: NativeStatus;

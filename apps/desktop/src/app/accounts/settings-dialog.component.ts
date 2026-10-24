@@ -206,6 +206,7 @@ export class SettingsDialogComponent implements OnInit {
     sshAgentPromptBehavior: SshAgentPromptType.Always,
     allowScreenshots: false,
     enableDuckDuckGoBrowserIntegration: false,
+    requireTouchIdForAutofill: true,
     enableAutotype: this.formBuilder.control<boolean>({
       value: false,
       disabled: true,
@@ -311,6 +312,9 @@ export class SettingsDialogComponent implements OnInit {
       openAtLogin: await firstValueFrom(this.desktopSettingsService.openAtLogin$),
       enableDuckDuckGoBrowserIntegration: await firstValueFrom(
         this.desktopAutofillSettingsService.enableDuckDuckGoBrowserIntegration$,
+      ),
+      requireTouchIdForAutofill: await firstValueFrom(
+        this.desktopAutofillSettingsService.requireUserVerificationForAutofill$,
       ),
       enableHardwareAcceleration: await firstValueFrom(
         this.desktopSettingsService.hardwareAcceleration$,
@@ -693,6 +697,12 @@ export class SettingsDialogComponent implements OnInit {
     // TODO: Ideally DesktopSettingsService.openAtLogin$ could be subscribed to directly rather than sending a message
     this.messagingService.send(
       this.form.value.openAtLogin ? "addOpenAtLogin" : "removeOpenAtLogin",
+    );
+  }
+
+  protected async saveRequireTouchIdForAutofill() {
+    await this.desktopAutofillSettingsService.setRequireUserVerificationForAutofill(
+      this.form.value.requireTouchIdForAutofill,
     );
   }
 

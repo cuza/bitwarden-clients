@@ -4,6 +4,7 @@ import { BehaviorSubject, of } from "rxjs";
 import { AccountService } from "@bitwarden/common/auth/abstractions/account.service";
 import { AuthService } from "@bitwarden/common/auth/abstractions/auth.service";
 import { AuthenticationStatus } from "@bitwarden/common/auth/enums/authentication-status";
+import { BillingAccountProfileStateService } from "@bitwarden/common/billing/abstractions/account/billing-account-profile-state.service";
 import { DeviceType } from "@bitwarden/common/enums";
 import { ConfigService } from "@bitwarden/common/platform/abstractions/config/config.service";
 import {
@@ -15,11 +16,13 @@ import { LogService } from "@bitwarden/common/platform/abstractions/log.service"
 import { PlatformUtilsService } from "@bitwarden/common/platform/abstractions/platform-utils.service";
 import { Utils } from "@bitwarden/common/platform/misc/utils";
 import { CipherService } from "@bitwarden/common/vault/abstractions/cipher.service";
+import { TotpService } from "@bitwarden/common/vault/abstractions/totp.service";
 import { CipherType } from "@bitwarden/common/vault/enums";
 import { CipherView } from "@bitwarden/common/vault/models/view/cipher.view";
 
 import { AutofillIpcErrorKind } from "../models/autofill-ipc-channels";
 
+import { DesktopAutofillSettingsService } from "./desktop-autofill-settings.service";
 import { DesktopAutofillService } from "./desktop-autofill.service";
 import {
   CredentialNotFound,
@@ -43,6 +46,9 @@ describe("DesktopAutofillService", () => {
   /** The active account's web vault URL. */
   let webVaultUrl: string;
   let fido2UserInterfaceService: MockProxy<DesktopFido2UserInterfaceService>;
+  let totpService: MockProxy<TotpService>;
+  let billingAccountProfileStateService: MockProxy<BillingAccountProfileStateService>;
+  let desktopAutofillSettingsService: MockProxy<DesktopAutofillSettingsService>;
 
   let activeAccountStatus$: BehaviorSubject<AuthenticationStatus>;
   let service: DesktopAutofillService;
@@ -59,6 +65,12 @@ describe("DesktopAutofillService", () => {
     webVaultUrl = "https://vault.bitwarden.com";
     environmentService.environment$ = of({ getWebVaultUrl: () => webVaultUrl } as Environment);
     fido2UserInterfaceService = mock<DesktopFido2UserInterfaceService>();
+    totpService = mock<TotpService>();
+    billingAccountProfileStateService = mock<BillingAccountProfileStateService>();
+    billingAccountProfileStateService.hasPremiumFromAnySource$.mockReturnValue(of(true));
+    desktopAutofillSettingsService = mock<DesktopAutofillSettingsService>();
+    desktopAutofillSettingsService.requireUserVerificationForAutofill$ = of(true);
+    accountService.activeAccount$ = new BehaviorSubject({ id: "user-id" } as any);
 
     activeAccountStatus$ = new BehaviorSubject<AuthenticationStatus>(AuthenticationStatus.Unlocked);
     authService.activeAccountStatus$ = activeAccountStatus$;
@@ -75,6 +87,9 @@ describe("DesktopAutofillService", () => {
       environmentService,
       platformUtilsService,
       fido2UserInterfaceService,
+      totpService,
+      billingAccountProfileStateService,
+      desktopAutofillSettingsService,
     );
   });
 
@@ -131,6 +146,9 @@ describe("DesktopAutofillService", () => {
         environmentService,
         platformUtilsService,
         fido2UserInterfaceService,
+        totpService,
+        billingAccountProfileStateService,
+        desktopAutofillSettingsService,
       );
 
       await expect(service.refreshPasskeyProviderState()).resolves.toEqual(unregistered);
@@ -328,6 +346,226 @@ describe("DesktopAutofillService", () => {
       } finally {
         delete (global as any).ipc;
       }
+    });
+  });
+
+  describe("doLoginCredential", () => {
+    let session: MockProxy<DesktopFido2UserInterfaceSession>;
+
+    const login = (id: string, fields: { password?: string; totp?: string }) =>
+      ({
+        id,
+        name: id,
+        type: CipherType.Login,
+        isDeleted: false,
+        login: { username: `${id}-user`, ...fields },
+      }) as unknown as CipherView;
+
+    const request = (overrides: Record<string, unknown> = {}) =>
+      ({
+        recordIdentifier: undefined,
+        serviceIdentifiers: ["https://example.com/login"],
+        oneTimeCode: false,
+        clientWindow: { position: { x: 0, y: 0 } },
+        context: "ctx",
+        ...overrides,
+      }) as any;
+
+    beforeEach(() => {
+      (global as any).ipc = {
+        autofill: { desktopAutofill: { getAppWindowHandle: jest.fn().mockResolvedValue(null) } },
+      };
+      session = mock<DesktopFido2UserInterfaceSession>();
+      session.pickLoginToFill.mockImplementation(async (candidates) => candidates[0]);
+      fido2UserInterfaceService.newSession.mockResolvedValue(session);
+    });
+
+    afterEach(() => {
+      delete (global as any).ipc;
+    });
+
+    it("fills the password of the login picked in the OS, after unlocking and verifying", async () => {
+      cipherService.getAllDecryptedForIds.mockResolvedValue([login("a", { password: "pw" })]);
+
+      await expect(
+        service.doLoginCredential(request({ recordIdentifier: "a" }), new AbortController()),
+      ).resolves.toEqual({ username: "a-user", password: "pw" });
+
+      expect(fido2UserInterfaceService.newSession).toHaveBeenCalledWith(
+        false,
+        expect.objectContaining({ rpId: "example.com" }),
+        expect.any(AbortController),
+      );
+      expect(session.ensureUnlockedVault).toHaveBeenCalled();
+      expect(session.pickLoginToFill).toHaveBeenCalledWith(
+        [expect.objectContaining({ id: "a" })],
+        true,
+        true,
+      );
+    });
+
+    it("passes the Touch ID setting through to verification", async () => {
+      desktopAutofillSettingsService.requireUserVerificationForAutofill$ = of(false);
+      cipherService.getAllDecryptedForIds.mockResolvedValue([login("a", { password: "pw" })]);
+
+      await service.doLoginCredential(request({ recordIdentifier: "a" }), new AbortController());
+
+      expect(session.pickLoginToFill).toHaveBeenCalledWith(expect.anything(), true, false);
+    });
+
+    it("fills a one-time code", async () => {
+      cipherService.getAllDecryptedForIds.mockResolvedValue([login("a", { totp: "SECRET" })]);
+      totpService.getCode$.mockReturnValue(of({ code: "123456", period: 30 }));
+
+      await expect(
+        service.doLoginCredential(
+          request({ recordIdentifier: "a", oneTimeCode: true }),
+          new AbortController(),
+        ),
+      ).resolves.toEqual({ username: "a-user", oneTimeCode: "123456" });
+      expect(totpService.getCode$).toHaveBeenCalledWith("SECRET");
+    });
+
+    it("does not fill one-time codes without premium", async () => {
+      billingAccountProfileStateService.hasPremiumFromAnySource$.mockReturnValue(of(false));
+      cipherService.getAllDecryptedForIds.mockResolvedValue([login("a", { totp: "SECRET" })]);
+
+      await expect(
+        service.doLoginCredential(
+          request({ recordIdentifier: "a", oneTimeCode: true }),
+          new AbortController(),
+        ),
+      ).rejects.toBeInstanceOf(CredentialNotFound);
+    });
+
+    it("reports a login the OS asked for that is no longer in the vault", async () => {
+      cipherService.getAllDecryptedForIds.mockResolvedValue([]);
+
+      await expect(
+        service.doLoginCredential(request({ recordIdentifier: "gone" }), new AbortController()),
+      ).rejects.toBeInstanceOf(CredentialNotFound);
+    });
+
+    it("offers the logins matching the site, and only those that can fill", async () => {
+      cipherService.getAllDecryptedForUrl.mockResolvedValue([
+        login("match", { password: "pw" }),
+        login("no-password", {}),
+      ]);
+
+      await service.doLoginCredential(
+        request({ serviceIdentifiers: ["example.com"] }),
+        new AbortController(),
+      );
+
+      expect(cipherService.getAllDecryptedForUrl).toHaveBeenCalledWith(
+        "https://example.com",
+        "user-id",
+      );
+      expect(session.pickLoginToFill).toHaveBeenCalledWith(
+        [expect.objectContaining({ id: "match" })],
+        false,
+        true,
+      );
+    });
+
+    it("offers every login when none match the site", async () => {
+      cipherService.getAllDecryptedForUrl.mockResolvedValue([]);
+      cipherService.getAllDecrypted.mockResolvedValue([login("other", { password: "pw" })]);
+
+      await service.doLoginCredential(request(), new AbortController());
+
+      expect(session.pickLoginToFill).toHaveBeenCalledWith(
+        [expect.objectContaining({ id: "other" })],
+        false,
+        true,
+      );
+    });
+
+    it("reports not found rather than showing an empty picker when no login can fill", async () => {
+      cipherService.getAllDecryptedForUrl.mockResolvedValue([]);
+      cipherService.getAllDecrypted.mockResolvedValue([login("no-totp", { password: "pw" })]);
+
+      await expect(
+        service.doLoginCredential(request({ oneTimeCode: true }), new AbortController()),
+      ).rejects.toBeInstanceOf(CredentialNotFound);
+      expect(session.pickLoginToFill).not.toHaveBeenCalled();
+      expect(session.loginFill).toBe(true);
+      expect(session.informCredentialNotFound).toHaveBeenCalled();
+    });
+
+    it("restores the window after unlocking, even when nothing can fill", async () => {
+      cipherService.getAllDecryptedForIds.mockResolvedValue([]);
+
+      await expect(
+        service.doLoginCredential(request({ recordIdentifier: "gone" }), new AbortController()),
+      ).rejects.toBeInstanceOf(CredentialNotFound);
+      expect(session.hideUi).toHaveBeenCalled();
+    });
+
+    it("restores the window after unlocking when the vault can't be read", async () => {
+      cipherService.getAllDecryptedForIds.mockRejectedValue(new Error("boom"));
+
+      await expect(
+        service.doLoginCredential(request({ recordIdentifier: "a" }), new AbortController()),
+      ).rejects.toThrow("boom");
+      expect(session.hideUi).toHaveBeenCalled();
+    });
+
+    it("rejects when the user backs out of the picker", async () => {
+      cipherService.getAllDecryptedForUrl.mockResolvedValue([login("a", { password: "pw" })]);
+      session.pickLoginToFill.mockResolvedValue(undefined);
+
+      await expect(service.doLoginCredential(request(), new AbortController())).rejects.toThrow(
+        "No login was chosen",
+      );
+    });
+  });
+
+  describe("syncing one-time codes to the OS", () => {
+    async function syncedCredentials(ciphers: CipherView[], oneTimeCode = true) {
+      const runCommand = jest
+        .fn()
+        .mockImplementation(async ({ command }) =>
+          command === "status"
+            ? { type: "success", value: { state: { enabled: true }, support: { oneTimeCode } } }
+            : { type: "success", value: { added: 0 } },
+        );
+      (global as any).ipc = { autofill: { desktopAutofill: { runCommand } } };
+      try {
+        await service.sync(ciphers);
+      } finally {
+        delete (global as any).ipc;
+      }
+      return runCommand.mock.calls.find(([c]) => c.command === "sync")[0].params.credentials;
+    }
+
+    const totpLogin = (id: string, uri: string | undefined, username = "user") =>
+      ({
+        id,
+        name: `${id}-name`,
+        type: CipherType.Login,
+        isDeleted: false,
+        login: { username, totp: "SECRET", uris: uri ? [{ uri, match: null }] : [] },
+      }) as unknown as CipherView;
+
+    it("syncs logins that have a TOTP key and a URI", async () => {
+      await expect(
+        syncedCredentials([totpLogin("a", "https://a.com"), totpLogin("b", undefined)]),
+      ).resolves.toEqual([
+        { type: "oneTimeCode", cipherId: "a", uri: "https://a.com", label: "user" },
+      ]);
+    });
+
+    it("labels a code with the item name when there is no username", async () => {
+      await expect(syncedCredentials([totpLogin("a", "https://a.com", "")])).resolves.toEqual([
+        expect.objectContaining({ label: "a-name" }),
+      ]);
+    });
+
+    it("skips one-time codes when the OS can't suggest them", async () => {
+      await expect(syncedCredentials([totpLogin("a", "https://a.com")], false)).resolves.toEqual(
+        [],
+      );
     });
   });
 

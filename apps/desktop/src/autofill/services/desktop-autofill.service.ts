@@ -16,6 +16,7 @@ import {
 import { AccountService } from "@bitwarden/common/auth/abstractions/account.service";
 import { AuthService } from "@bitwarden/common/auth/abstractions/auth.service";
 import { AuthenticationStatus } from "@bitwarden/common/auth/enums/authentication-status";
+import { BillingAccountProfileStateService } from "@bitwarden/common/billing/abstractions/account/billing-account-profile-state.service";
 import { DeviceType } from "@bitwarden/common/enums";
 import { FeatureFlag } from "@bitwarden/common/enums/feature-flag.enum";
 import { UriMatchStrategy } from "@bitwarden/common/models/domain/domain-service";
@@ -35,6 +36,7 @@ import { getCredentialsForAutofill } from "@bitwarden/common/platform/services/f
 import { Fido2Utils } from "@bitwarden/common/platform/services/fido2/fido2-utils";
 import { UserId } from "@bitwarden/common/types/guid";
 import { CipherService } from "@bitwarden/common/vault/abstractions/cipher.service";
+import { TotpService } from "@bitwarden/common/vault/abstractions/totp.service";
 import { CipherType } from "@bitwarden/common/vault/enums";
 import { CipherView } from "@bitwarden/common/vault/models/view/cipher.view";
 import { autofill, passkey_authenticator } from "@bitwarden/desktop-napi";
@@ -45,6 +47,8 @@ type PasskeyRegistrationRequest = autofill.PasskeyRegistrationRequest;
 type PasskeyAssertionWithoutUserInterfaceRequest =
   autofill.PasskeyAssertionWithoutUserInterfaceRequest;
 type NativeStatus = autofill.NativeStatus;
+type LoginCredentialRequest = autofill.LoginCredentialRequest;
+type LoginCredentialResponse = autofill.LoginCredentialResponse;
 export type PasskeyProviderState = passkey_authenticator.PasskeyProviderState;
 
 import { AutofillIpcErrorKind } from "../models/autofill-ipc-channels";
@@ -55,14 +59,17 @@ import {
 import { AutofillStatusCommand } from "../models/autofill-status.command";
 import {
   AutofillFido2Credential,
+  AutofillOneTimeCodeCredential,
   AutofillPasswordCredential,
   AutofillSyncCommand,
 } from "../models/autofill-sync.command";
 import { CompletionCallback, IpcListenerBindFn } from "../models/ipc-handler.type";
 
+import { DesktopAutofillSettingsService } from "./desktop-autofill-settings.service";
 import {
   CredentialNotFound,
   DesktopFido2UserInterfaceService,
+  type DesktopFido2UserInterfaceSession,
   ExcludedCredentialMatched,
   type NativeWindowObject,
   type RpIdNotAllowedOperation,
@@ -100,6 +107,24 @@ function vaultRpId(webVaultUrl: string): string | undefined {
   return url.hostname;
 }
 
+/** The first URI of a login that the OS may suggest it for. */
+function fillableUri(cipher: CipherView): string | undefined {
+  return cipher.login.uris?.find(
+    (uri) => uri.match !== UriMatchStrategy.Never && !Utils.isNullOrWhitespace(uri.uri),
+  )?.uri;
+}
+
+/**
+ * Turns an OS service identifier into a URL. Apps and websites are identified
+ * by a URL or, for some requests, a bare domain.
+ */
+function toUrl(serviceIdentifier: string): string | undefined {
+  if (Utils.isNullOrWhitespace(serviceIdentifier)) {
+    return undefined;
+  }
+  return serviceIdentifier.includes("://") ? serviceIdentifier : `https://${serviceIdentifier}`;
+}
+
 function isVaultRpId(rpId: string, vaultRpId: string | undefined): boolean {
   return vaultRpId !== undefined && rpId.toLowerCase() === vaultRpId;
 }
@@ -123,6 +148,9 @@ export class DesktopAutofillService implements OnDestroy {
     private environmentService: EnvironmentService,
     platformUtilsService: PlatformUtilsService,
     private fido2UserInterfaceService: DesktopFido2UserInterfaceService,
+    private totpService: TotpService,
+    private billingAccountProfileStateService: BillingAccountProfileStateService,
+    private desktopAutofillSettingsService: DesktopAutofillSettingsService,
   ) {
     const deviceType = platformUtilsService.getDevice();
     if (deviceType === DeviceType.MacOsDesktop) {
@@ -247,8 +275,16 @@ export class DesktopAutofillService implements OnDestroy {
           ]).pipe(
             // Only proceed when the vault is unlocked
             filter(([, status]) => status === AuthenticationStatus.Unlocked),
-            // Then get cipher views
-            switchMap(([userId]) => this.cipherService.cipherViews$(userId)),
+            // Then get cipher views, again when premium changes since it decides which
+            // one-time codes the OS may offer.
+            switchMap(([userId]) =>
+              combineLatest([
+                this.cipherService.cipherViews$(userId),
+                this.billingAccountProfileStateService
+                  .hasPremiumFromAnySource$(userId)
+                  .pipe(distinctUntilChanged()),
+              ]).pipe(map(([cipherViews]) => cipherViews)),
+            ),
           );
         }),
         // No filter for empty arrays here - we want to sync even if there are 0 items
@@ -298,6 +334,7 @@ export class DesktopAutofillService implements OnDestroy {
 
     let fido2Credentials: AutofillFido2Credential[] = [];
     let passwordCredentials: AutofillPasswordCredential[] = [];
+    let oneTimeCodeCredentials: AutofillOneTimeCodeCredential[] = [];
 
     if (status.value.support.password) {
       passwordCredentials = cipherViews
@@ -322,6 +359,28 @@ export class DesktopAutofillService implements OnDestroy {
         }));
     }
 
+    if (status.value.support.oneTimeCode) {
+      const hasPremium = await this.activeUserHasPremium();
+      oneTimeCodeCredentials = cipherViews
+        .filter(
+          (cipher) =>
+            !cipher.isDeleted &&
+            cipher.type === CipherType.Login &&
+            !Utils.isNullOrWhitespace(cipher.login.totp) &&
+            (hasPremium || cipher.organizationUseTotp),
+        )
+        .flatMap((cipher) => {
+          const uri = fillableUri(cipher);
+          if (uri == null) {
+            return [];
+          }
+          const label = Utils.isNullOrWhitespace(cipher.login.username)
+            ? cipher.name
+            : cipher.login.username;
+          return [{ type: "oneTimeCode" as const, cipherId: cipher.id, uri, label }];
+        });
+    }
+
     if (status.value.support.fido2) {
       // Filter out passkey requests if the RP ID is this account's web vault
       // hostname, so a vault can't hold the passkey that unlocks itself.
@@ -337,13 +396,14 @@ export class DesktopAutofillService implements OnDestroy {
     this.logService.info("Syncing autofill credentials", {
       fido2Credentials: fido2Credentials.length,
       passwordCredentials: passwordCredentials.length,
+      oneTimeCodeCredentials: oneTimeCodeCredentials.length,
     });
 
     const syncResult = await ipc.autofill.desktopAutofill.runCommand<AutofillSyncCommand>({
       namespace: "autofill",
       command: "sync",
       params: {
-        credentials: [...fido2Credentials, ...passwordCredentials],
+        credentials: [...fido2Credentials, ...passwordCredentials, ...oneTimeCodeCredentials],
       },
     });
 
@@ -432,6 +492,103 @@ export class DesktopAutofillService implements OnDestroy {
     return this.convertAssertionResponse(request, response);
   }
 
+  /**
+   * Fills a login's password or one-time code into another app. The user picks
+   * the login in Bitwarden unless they already picked it in the OS suggestions.
+   *
+   * @throws {CredentialNotFound} if the login the OS asked for is gone, or no
+   * login in the vault can fill the request.
+   */
+  async doLoginCredential(
+    request: LoginCredentialRequest,
+    abortController: AbortController,
+  ): Promise<LoginCredentialResponse> {
+    const url = request.serviceIdentifiers.map(toUrl).find((u) => u != null);
+    const session = await this.fido2UserInterfaceService.newSession(
+      false,
+      {
+        windowXy: request.clientWindow.position,
+        clientWindowHandle: null,
+        appWindowHandle: await ipc.autofill.desktopAutofill.getAppWindowHandle(),
+        rpId: (url && Utils.getHostname(url)) ?? request.serviceIdentifiers[0] ?? "",
+        requestContext: request.context,
+      },
+      abortController,
+    );
+    await session.ensureUnlockedVault();
+    try {
+      return await this.fillLogin(request, url, session);
+    } finally {
+      // Unlocking leaves the window in modal mode; restore it however the fill ends.
+      await session.hideUi();
+    }
+  }
+
+  private async fillLogin(
+    request: LoginCredentialRequest,
+    url: string | undefined,
+    session: DesktopFido2UserInterfaceSession,
+  ): Promise<LoginCredentialResponse> {
+    const userId = (await firstValueFrom(this.accountService.activeAccount$))?.id;
+    if (!userId) {
+      throw new Error("No active user found");
+    }
+    const hasPremium = await this.activeUserHasPremium();
+    const fillable = (cipher: CipherView) =>
+      !cipher.isDeleted &&
+      cipher.type === CipherType.Login &&
+      (request.oneTimeCode
+        ? !Utils.isNullOrWhitespace(cipher.login.totp) && (hasPremium || cipher.organizationUseTotp)
+        : !Utils.isNullOrWhitespace(cipher.login.password));
+
+    let candidates: CipherView[];
+    if (request.recordIdentifier != null) {
+      candidates = (
+        await this.cipherService.getAllDecryptedForIds(userId, [request.recordIdentifier])
+      ).filter(fillable);
+    } else {
+      candidates =
+        url != null
+          ? (await this.cipherService.getAllDecryptedForUrl(url, userId)).filter(fillable)
+          : [];
+      if (candidates.length === 0) {
+        // Nothing matches this site; let the user pick any login instead.
+        candidates = (await this.cipherService.getAllDecrypted(userId)).filter(fillable);
+      }
+    }
+    if (candidates.length === 0) {
+      session.loginFill = true;
+      await session.informCredentialNotFound();
+      throw new CredentialNotFound();
+    }
+
+    const login = await session.pickLoginToFill(
+      candidates,
+      request.recordIdentifier != null,
+      await firstValueFrom(this.desktopAutofillSettingsService.requireUserVerificationForAutofill$),
+    );
+    if (!login) {
+      throw new Error("No login was chosen");
+    }
+
+    const username = login.login.username ?? "";
+    if (request.oneTimeCode) {
+      const { code } = await firstValueFrom(this.totpService.getCode$(login.login.totp!));
+      return { username, oneTimeCode: code };
+    }
+    return { username, password: login.login.password ?? "" };
+  }
+
+  private async activeUserHasPremium(): Promise<boolean> {
+    const userId = (await firstValueFrom(this.accountService.activeAccount$))?.id;
+    return (
+      userId != null &&
+      (await firstValueFrom(
+        this.billingAccountProfileStateService.hasPremiumFromAnySource$(userId),
+      ))
+    );
+  }
+
   /** The RP ID of the active account's vault, if it can be protected. */
   private async activeVaultRpId(): Promise<string | undefined> {
     const environment = await firstValueFrom(this.environmentService.environment$);
@@ -516,6 +673,12 @@ export class DesktopAutofillService implements OnDestroy {
       ipcDesktopAutofill.listenPasskeyAssertionWithoutUserInterface,
       (request, abortController) =>
         this.doPasskeyAssertionWithoutUserInterface(request, abortController),
+      (request) => request.context,
+    );
+
+    this.makeListener(
+      ipcDesktopAutofill.listenLoginCredential,
+      (request, abortController) => this.doLoginCredential(request, abortController),
       (request) => request.context,
     );
 

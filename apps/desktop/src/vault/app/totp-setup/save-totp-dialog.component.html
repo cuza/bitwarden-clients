@@ -1,0 +1,59 @@
+<bit-dialog>
+  <span bitDialogTitle>{{ "saveVerificationCode" | i18n }}</span>
+  <div bitDialogContent>
+    <p bitTypography="body1">
+      {{ "saveVerificationCodeDesc" | i18n: serviceName || ("verificationCodeTotp" | i18n) }}
+    </p>
+    <bit-search
+      id="save-totp-dialog_input_search"
+      [formControl]="search"
+      [placeholder]="'search' | i18n"
+    />
+    <div class="tw-mt-3 tw-max-h-72 tw-overflow-y-auto">
+      <bit-radio-group [formControl]="target" [block]="true">
+        <bit-label>{{ "saveTo" | i18n }}</bit-label>
+        <bit-radio-button id="save-totp-dialog_radio_new" [value]="NEW_LOGIN">
+          <bit-label>{{ "newLoginItem" | i18n }}</bit-label>
+          @if (serviceName) {
+            <bit-hint>{{ serviceName }}</bit-hint>
+          }
+        </bit-radio-button>
+        @for (cipher of visibleLogins(); track cipher.id) {
+          <bit-radio-button [id]="'save-totp-dialog_radio_' + cipher.id" [value]="cipher.id">
+            <bit-label>{{ cipher.name }}</bit-label>
+            @if (cipher.login.username) {
+              <bit-hint>{{ cipher.login.username }}</bit-hint>
+            }
+          </bit-radio-button>
+        } @empty {
+          <p bitTypography="body2" class="tw-text-fg-body-subtle">{{ "noItemsInList" | i18n }}</p>
+        }
+      </bit-radio-group>
+    </div>
+    @if (replacesKey()) {
+      <bit-callout type="warning" [title]="null" class="tw-mt-3 tw-block">
+        {{ "replaceVerificationCodeWarning" | i18n }}
+      </bit-callout>
+    }
+  </div>
+  <ng-container bitDialogFooter>
+    <button
+      id="save-totp-dialog_button_save"
+      type="button"
+      bitButton
+      buttonType="primary"
+      [bitAction]="submit"
+    >
+      {{ "save" | i18n }}
+    </button>
+    <button
+      id="save-totp-dialog_button_cancel"
+      type="button"
+      bitButton
+      buttonType="secondary"
+      bitDialogClose
+    >
+      {{ "cancel" | i18n }}
+    </button>
+  </ng-container>
+</bit-dialog>

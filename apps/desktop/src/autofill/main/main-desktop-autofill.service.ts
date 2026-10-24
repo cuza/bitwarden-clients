@@ -165,6 +165,12 @@ export class DesktopAutofillMain {
       AutofillIpcServer.prototype.completeLockStatus,
     );
 
+    const loginCredentialCallback = this.makeListener(
+      AutofillIpcChannelIncoming.LoginCredential,
+      AutofillIpcChannelOutgoing.LoginCredential,
+      AutofillIpcServer.prototype.completeLoginCredential,
+    );
+
     // The window handle query only requires reading from main process, so no need to
     // ping-pong between ipc->main->renderer-main->renderer->main->ipc. Use a
     // method bound to this class instance instead of going through IPC.
@@ -178,6 +184,7 @@ export class DesktopAutofillMain {
       assertionWithoutUserInterfaceCallback,
       nativeStatusCallback,
       lockStatusCallback,
+      loginCredentialCallback,
       windowHandleQueryCallback,
       cancelRequestCallback,
     });

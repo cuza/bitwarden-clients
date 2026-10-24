@@ -320,6 +320,10 @@
     {
       "name": "Bitwarden",
       "schemes": ["bitwarden"]
+    },
+    {
+      "name": "One-time code setup",
+      "schemes": ["otpauth"]
     }
   ]
 }

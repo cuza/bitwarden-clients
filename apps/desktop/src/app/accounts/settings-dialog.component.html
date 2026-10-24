@@ -318,6 +318,19 @@
               </button>
             </span>
           </div>
+          @if (isMac) {
+            <bit-form-control>
+              <input
+                id="settings_input_require-touch-id-for-autofill"
+                type="checkbox"
+                bitCheckbox
+                formControlName="requireTouchIdForAutofill"
+                (change)="saveRequireTouchIdForAutofill()"
+              />
+              <bit-label>{{ "requireTouchIdForAutofill" | i18n }}</bit-label>
+              <bit-hint>{{ "requireTouchIdForAutofillDesc" | i18n }}</bit-hint>
+            </bit-form-control>
+          }
         }
 
         <bit-form-field>

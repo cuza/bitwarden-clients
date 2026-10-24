@@ -12,6 +12,8 @@ export type AutofillStatusResult = AutofillCommandOutput<{
   support: {
     fido2: boolean;
     password: boolean;
+    /** macOS 15+ can suggest one-time codes. */
+    oneTimeCode?: boolean;
     incrementalUpdates: boolean;
   };
   state: {

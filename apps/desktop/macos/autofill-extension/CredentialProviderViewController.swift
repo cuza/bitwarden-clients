@@ -326,6 +326,29 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
      by completing the extension request with the associated ASPasswordCredential.
      */
     override func prepareInterfaceToProvideCredential(for credentialRequest: ASCredentialRequest) {
+        if let request = credentialRequest as? ASPasswordCredentialRequest,
+           let identity = request.credentialIdentity as? ASPasswordCredentialIdentity {
+            logger.log("[autofill-extension] prepareInterfaceToProvideCredential (password) called")
+            provideLoginCredential(
+                recordIdentifier: identity.recordIdentifier,
+                serviceIdentifiers: [identity.serviceIdentifier],
+                oneTimeCode: false
+            )
+            return
+        }
+
+        if #available(macOSApplicationExtension 15.0, *),
+           let request = credentialRequest as? ASOneTimeCodeCredentialRequest,
+           let identity = request.credentialIdentity as? ASOneTimeCodeCredentialIdentity {
+            logger.log("[autofill-extension] prepareInterfaceToProvideCredential (one-time code) called")
+            provideLoginCredential(
+                recordIdentifier: identity.recordIdentifier,
+                serviceIdentifiers: [identity.serviceIdentifier],
+                oneTimeCode: true
+            )
+            return
+        }
+
         let timeoutTimer = createTimer()
         if let request = credentialRequest as? ASPasskeyCredentialRequest {
             if let passkeyIdentity = request.credentialIdentity as? ASPasskeyCredentialIdentity {
@@ -409,6 +432,91 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
 
         logger.log("[autofill-extension] provideCredentialWithoutUserInteraction2 called wrong")
         self.extensionContext.cancelRequest(withError: BitwardenError.Internal("Invalid authentication request"))
+    }
+
+    // The user chose Bitwarden for a password without picking a specific login, so they pick one in the desktop app.
+    override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        logger.log("[autofill-extension] prepareCredentialList(password) for serviceIdentifiers: \(serviceIdentifiers.count)")
+        provideLoginCredential(recordIdentifier: nil, serviceIdentifiers: serviceIdentifiers, oneTimeCode: false)
+    }
+
+    // The user chose Bitwarden for a verification code without picking a specific login.
+    @available(macOSApplicationExtension 15.0, *)
+    override func prepareOneTimeCodeCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        logger.log("[autofill-extension] prepareOneTimeCodeCredentialList for serviceIdentifiers: \(serviceIdentifiers.count)")
+        provideLoginCredential(recordIdentifier: nil, serviceIdentifiers: serviceIdentifiers, oneTimeCode: true)
+    }
+
+    /// Asks the desktop app for a login's password or one-time code and completes the request with it.
+    /// - Parameter recordIdentifier: The cipher ID the user picked in the OS suggestions, or nil to let them pick in the app.
+    private func provideLoginCredential(
+        recordIdentifier: String?,
+        serviceIdentifiers: [ASCredentialServiceIdentifier],
+        oneTimeCode: Bool
+    ) {
+        class CallbackImpl: PrepareLoginCredentialCallback {
+            let ctx: ASCredentialProviderExtensionContext
+            let logger: Logger
+            let timeoutTimer: DispatchWorkItem
+            let oneTimeCode: Bool
+            let onFinish: () -> Void
+            required init(_ ctx: ASCredentialProviderExtensionContext, _ logger: Logger, _ timeoutTimer: DispatchWorkItem, _ oneTimeCode: Bool, _ onFinish: @escaping () -> Void) {
+                self.ctx = ctx
+                self.logger = logger
+                self.timeoutTimer = timeoutTimer
+                self.oneTimeCode = oneTimeCode
+                self.onFinish = onFinish
+            }
+
+            func onComplete(credential: LoginCredentialResponse) {
+                self.onFinish()
+                self.timeoutTimer.cancel()
+                if oneTimeCode {
+                    if #available(macOSApplicationExtension 15.0, *), let code = credential.oneTimeCode {
+                        ctx.completeOneTimeCodeRequest(using: ASOneTimeCodeCredential(code: code), completionHandler: nil)
+                        return
+                    }
+                } else if let password = credential.password {
+                    ctx.completeRequest(
+                        withSelectedCredential: ASPasswordCredential(user: credential.username, password: password),
+                        completionHandler: nil
+                    )
+                    return
+                }
+                logger.error("[autofill-extension] The desktop app returned no credential")
+                ctx.cancelRequest(withError: BitwardenError.Internal("The desktop app returned no credential"))
+            }
+
+            func onError(error: BitwardenError) {
+                self.onFinish()
+                logger.error("[autofill-extension] OnError called, cancelling the request \(error)")
+                self.timeoutTimer.cancel()
+                // The system asked for a login that the vault no longer holds.
+                if case .CredentialNotFound = error {
+                    ctx.cancelRequest(withError: ASExtensionError(.credentialIdentityNotFound))
+                } else {
+                    ctx.cancelRequest(withError: error)
+                }
+            }
+        }
+
+        let timeoutTimer = createTimer()
+
+        Task {
+            let clientWindow = await self.getWindowDetails()
+            let context = UUID().uuidString
+            let req = LoginCredentialRequest(
+                recordIdentifier: recordIdentifier,
+                serviceIdentifiers: serviceIdentifiers.map { $0.identifier },
+                oneTimeCode: oneTimeCode,
+                clientWindow: clientWindow,
+                context: context
+            )
+
+            let client = await getClient()
+            self.beginRequest(context)
+            client.prepareLoginCredential(request: req, callback: CallbackImpl(self.extensionContext, self.logger, timeoutTimer, oneTimeCode, { [weak self] in self?.finishRequest() }))
+        }
     }
 
     private func createTimer() -> DispatchWorkItem {

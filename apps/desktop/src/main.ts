@@ -4,7 +4,7 @@ import "core-js/proposals/explicit-resource-management";
 
 import * as path from "path";
 
-import { app } from "electron";
+import { app, ipcMain } from "electron";
 import { Subject, firstValueFrom } from "rxjs";
 
 import { SsoUrlService } from "@bitwarden/auth/common";
@@ -114,7 +114,23 @@ export class Main {
   ssoCookieMain: SsoCookieMain;
   ipcService: IpcService;
 
+  /** Links that arrived before the renderer could receive them, such as the one that launched the app. */
+  private pendingDeepLinks: string[] = [];
+  private deepLinkListenerReady = false;
+
   constructor() {
+    // macOS delivers the link that launched the app during startup, so listen from the start.
+    app.on("open-url", (event, url) => {
+      event.preventDefault();
+      this.processDeepLink([url]);
+    });
+    // Registered before the window exists so the renderer's message can't arrive first.
+    ipcMain.on("messagingService", (_event, message) => {
+      if (message?.command === "deepLinkListenerReady") {
+        this.onDeepLinkListenerReady();
+      }
+    });
+
     // Set paths for portable builds
     let appDataPath = null;
     if (process.env.BITWARDEN_APPDATA_DIR != null) {
@@ -459,12 +475,6 @@ export class Main {
           app.setAsDefaultProtocolClient("bitwarden");
         }
 
-        // Process protocol for macOS
-        app.on("open-url", (event, url) => {
-          event.preventDefault();
-          this.processDeepLink([url]);
-        });
-
         // Handle window visibility events
         this.windowMain.win.on("hide", () => {
           this.messagingService.send("windowHidden");
@@ -481,10 +491,22 @@ export class Main {
 
   private processDeepLink(argv: string[]): void {
     argv
-      .filter((s) => s.indexOf("bitwarden://") === 0)
+      .filter((s) => s.indexOf("bitwarden://") === 0 || s.indexOf("otpauth://") === 0)
       .forEach((s) => {
-        this.messagingService.send("deepLink", { urlString: s });
+        if (this.deepLinkListenerReady) {
+          this.messagingService.send("deepLink", { urlString: s });
+        } else {
+          this.pendingDeepLinks.push(s);
+        }
       });
+  }
+
+  /** Called once the renderer listens for deep links; sends it any that arrived before. */
+  private onDeepLinkListenerReady(): void {
+    this.deepLinkListenerReady = true;
+    const pending = this.pendingDeepLinks;
+    this.pendingDeepLinks = [];
+    pending.forEach((s) => this.messagingService.send("deepLink", { urlString: s }));
   }
 
   private async toggleHardwareAcceleration(): Promise<void> {

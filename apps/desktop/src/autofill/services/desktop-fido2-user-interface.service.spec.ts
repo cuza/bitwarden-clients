@@ -1,6 +1,7 @@
+import { Dialog } from "@angular/cdk/dialog";
 import { Router } from "@angular/router";
 import { mock, MockProxy } from "jest-mock-extended";
-import { BehaviorSubject, of } from "rxjs";
+import { BehaviorSubject, firstValueFrom, of } from "rxjs";
 
 import { AccountService } from "@bitwarden/common/auth/abstractions/account.service";
 import { AuthService } from "@bitwarden/common/auth/abstractions/auth.service";
@@ -75,6 +76,7 @@ describe("DesktopFido2UserInterfaceSession", () => {
   let userVerificationService: MockProxy<DesktopFido2UserVerificationService>;
   let passwordRepromptService: MockProxy<PasswordRepromptService>;
   let domainSettingsService: MockProxy<DomainSettingsService>;
+  let dialog: MockProxy<Dialog>;
 
   let activeAccountStatus$: BehaviorSubject<AuthenticationStatus>;
   let abortController: AbortController;
@@ -107,6 +109,7 @@ describe("DesktopFido2UserInterfaceSession", () => {
     passwordRepromptService.enabled.mockResolvedValue(true);
 
     domainSettingsService = mock<DomainSettingsService>();
+    dialog = mock<Dialog>();
     domainSettingsService.getUrlEquivalentDomains.mockReturnValue(of(new Set<string>()));
 
     activeAccountStatus$ = new BehaviorSubject<AuthenticationStatus>(AuthenticationStatus.Unlocked);
@@ -171,6 +174,7 @@ describe("DesktopFido2UserInterfaceSession", () => {
       userVerificationService,
       passwordRepromptService,
       domainSettingsService,
+      dialog,
     );
   });
 
@@ -280,6 +284,93 @@ describe("DesktopFido2UserInterfaceSession", () => {
         "Request was cancelled before the user selected a cipher",
         expect.anything(),
       );
+    });
+  });
+
+  describe("pickLoginToFill", () => {
+    const loginCipher = (id: string, reprompt = CipherRepromptType.None) =>
+      Object.assign(new CipherView(), {
+        id,
+        name: id,
+        type: CipherType.Login,
+        reprompt,
+        login: Object.assign(new LoginView(), { username: `${id}-user` }),
+      });
+
+    it("fills the login picked in the OS without showing the picker, after verifying through the OS", async () => {
+      userVerificationService.verify.mockResolvedValue(true);
+      const login = loginCipher("a");
+
+      await expect(session.pickLoginToFill([login], true, true)).resolves.toBe(login);
+
+      // No UI was shown, so a dialog the user has open is left alone.
+      expect(dialog.closeAll).not.toHaveBeenCalled();
+      expect(userVerificationService.verify).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: "autofill", username: "a-user" }),
+        expect.anything(),
+      );
+      expect(router.navigate).not.toHaveBeenCalled();
+    });
+
+    it("refuses to fill when OS verification fails", async () => {
+      userVerificationService.verify.mockResolvedValue(false);
+
+      await expect(session.pickLoginToFill([loginCipher("a")], true, true)).rejects.toMatchObject({
+        errorCode: Fido2AuthenticatorErrorCode.NotAllowed,
+      });
+    });
+
+    it("fills without an OS prompt when the setting does not require one", async () => {
+      const login = loginCipher("a");
+
+      await expect(session.pickLoginToFill([login], true, false)).resolves.toBe(login);
+
+      expect(userVerificationService.verify).not.toHaveBeenCalled();
+    });
+
+    it("shows its window and asks for the master password on a reprompt login, even without the setting", async () => {
+      passwordRepromptService.showPasswordPrompt.mockResolvedValue(false);
+      const login = loginCipher("a", CipherRepromptType.Password);
+
+      const result = session.pickLoginToFill([login], true, false);
+      await tick();
+      expect(router.navigate).toHaveBeenCalledWith(["/fido2-assertion", expect.anything()]);
+
+      session.confirmChosenCipher(login);
+
+      await expect(result).rejects.toMatchObject({
+        errorCode: Fido2AuthenticatorErrorCode.NotAllowed,
+      });
+      expect(passwordRepromptService.showPasswordPrompt).toHaveBeenCalled();
+    });
+
+    it("shows the picker when the user has not chosen a login yet, then fills the chosen one", async () => {
+      userVerificationService.verify.mockResolvedValue(true);
+      const candidates = [loginCipher("a"), loginCipher("b")];
+
+      const result = session.pickLoginToFill(candidates, false, true);
+      await tick();
+
+      expect(session.loginFill).toBe(true);
+      expect(router.navigate).toHaveBeenCalledWith(["/fido2-assertion", expect.anything()]);
+      // The picker reuses the app window, so dialogs open in it (e.g. settings) are closed.
+      expect(dialog.closeAll).toHaveBeenCalled();
+      await expect(firstValueFrom(session.availableCipherIds$)).resolves.toEqual(["a", "b"]);
+
+      session.confirmChosenCipher(Object.assign(new CipherView(), { id: "b" }));
+
+      await expect(result).resolves.toBe(candidates[1]);
+      expect(router.navigate).toHaveBeenLastCalledWith(["/"]);
+    });
+
+    it("resolves to nothing when the user closes the picker", async () => {
+      const result = session.pickLoginToFill([loginCipher("a"), loginCipher("b")], false, true);
+      await tick();
+
+      session.confirmChosenCipher(undefined);
+
+      await expect(result).resolves.toBeUndefined();
+      expect(userVerificationService.verify).not.toHaveBeenCalled();
     });
   });
 

@@ -1,7 +1,8 @@
 import { CommonModule } from "@angular/common";
 import { ChangeDetectionStrategy, Component, inject } from "@angular/core";
+import { FormControl, ReactiveFormsModule } from "@angular/forms";
 import { RouterModule, Router } from "@angular/router";
-import { map, combineLatest, of, Observable, switchMap, catchError } from "rxjs";
+import { map, combineLatest, of, Observable, switchMap, catchError, startWith } from "rxjs";
 
 import { IconComponent } from "@bitwarden/angular/vault/components/icon.component";
 import { AccountService } from "@bitwarden/common/auth/abstractions/account.service";
@@ -17,6 +18,7 @@ import {
   DialogModule,
   DialogService,
   ItemModule,
+  SearchModule,
   SectionComponent,
   TableModule,
   SectionHeaderComponent,
@@ -47,6 +49,8 @@ import { Fido2ModalPageComponent } from "./fido2-modal-page.component";
     TypographyModule,
     Fido2ModalHeaderComponent,
     Fido2ModalPageComponent,
+    ReactiveFormsModule,
+    SearchModule,
   ],
   templateUrl: "fido2-vault.component.html",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -61,6 +65,11 @@ export class Fido2VaultComponent {
   private readonly router = inject(Router);
 
   readonly session = this.fido2UserInterfaceService.getCurrentSession();
+  protected readonly search = new FormControl("", { nonNullable: true });
+  protected readonly titleKey = this.session?.loginFill ? "autofillLogin" : "passkeyLogin2";
+  protected readonly headingKey = this.session?.loginFill
+    ? "chooseLoginToAutofill"
+    : "chooseCipherForPasskeyAuth";
   readonly ciphers$: Observable<CipherViewLike[]> = this.buildCiphers$();
   protected readonly CipherViewLikeUtils = CipherViewLikeUtils;
 
@@ -107,18 +116,19 @@ export class Fido2VaultComponent {
         return combineLatest([
           this.cipherService.cipherListViews$(activeUserId),
           this.session?.availableCipherIds$ ?? of(null as string[] | null),
+          this.search.valueChanges.pipe(startWith(this.search.value)),
         ]).pipe(
-          map(([ciphers, cipherIds]): CipherViewLike[] => {
-            const activeCiphers = ciphers.filter((cipher) => !cipher.deletedDate);
+          map(([ciphers, cipherIds, query]): CipherViewLike[] => {
+            let activeCiphers: CipherViewLike[] = ciphers.filter((cipher) => !cipher.deletedDate);
 
             if (cipherIds != null && cipherIds.length > 0) {
-              return activeCiphers.filter((cipher) => {
+              activeCiphers = activeCiphers.filter((cipher) => {
                 const id = cipher.id?.toString();
                 return id != null && cipherIds.includes(id);
               });
             }
 
-            return activeCiphers;
+            return activeCiphers.filter((cipher) => matchesSearch(cipher, query));
           }),
         );
       }),
@@ -128,4 +138,16 @@ export class Fido2VaultComponent {
       }),
     );
   }
+}
+
+/** Whether the cipher's name, username, or a website contains the search text. */
+function matchesSearch(cipher: CipherViewLike, query: string): boolean {
+  const text = query.trim().toLowerCase();
+  if (!text) {
+    return true;
+  }
+  const login = CipherViewLikeUtils.getLogin(cipher);
+  return [cipher.name, login?.username, ...(login?.uris ?? []).map((u) => u.uri)].some((value) =>
+    value?.toLowerCase().includes(text),
+  );
 }

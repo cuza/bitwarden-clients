@@ -6,6 +6,30 @@ export declare namespace autofill {
     /** Whether the desktop client is unlocked. */
     isUnlocked: boolean
   }
+  /** Request for the password or one-time code of a login. */
+  export interface LoginCredentialRequest {
+    /**
+     * The cipher ID of the credential identity the user picked in the OS
+     * suggestions, if any. Without one, the user picks a login in Bitwarden.
+     */
+    recordIdentifier?: string
+    /** URLs or domains of the website or app asking for the credential. */
+    serviceIdentifiers: Array<string>
+    /** Whether the OS asked for a one-time code rather than a password. */
+    oneTimeCode: boolean
+    /** Details about the window of the client asking for the credential. */
+    clientWindow: WindowDetails
+    /** A UUID representing the request, used to cancel it. */
+    context: string
+  }
+  /** The login chosen for a [`LoginCredentialRequest`]. */
+  export interface LoginCredentialResponse {
+    username: string
+    /** Set when the request asked for a password. */
+    password?: string
+    /** Set when the request asked for a one-time code. */
+    oneTimeCode?: string
+  }
   /**
    * Store native desktop status information to use for IPC communication
    * between the application and the credential provider.
@@ -209,6 +233,7 @@ export declare namespace autofill {
     stop(): void
     completeRegistration(clientId: number, sequenceNumber: number, response: PasskeyRegistrationResponse): number
     completeAssertion(clientId: number, sequenceNumber: number, response: PasskeyAssertionResponse): number
+    completeLoginCredential(clientId: number, sequenceNumber: number, response: LoginCredentialResponse): number
     completeLockStatus(clientId: number, sequenceNumber: number, response: LockStatusResponse): number
     completeWindowHandleQuery(clientId: number, sequenceNumber: number, response: WindowHandleQueryResponse): number
     completeError(clientId: number, sequenceNumber: number, error: string): number
@@ -246,6 +271,13 @@ export declare namespace autofill {
    * will use the same value to identify the request to be cancelled.
    */
   assertionWithoutUserInterfaceCallback: { (error: null, clientId: number, sequenceNumber: number, message: PasskeyAssertionWithoutUserInterfaceRequest): void; (error: Error, clientId: number, sequenceNumber: number, message: null): void; }
+  /**
+   * Function to execute when a login's password or one-time code is requested.
+   *
+   * The `context` field should be stored, as the cancel_request_callback
+   * will use the same value to identify the request to be cancelled.
+   */
+  loginCredentialCallback: { (error: null, clientId: number, sequenceNumber: number, message: LoginCredentialRequest): void; (error: Error, clientId: number, sequenceNumber: number, message: null): void; }
   /** Function to execute when a notification of the autofill provider's status is received. */
   nativeStatusCallback: { (error: null, clientId: number, sequenceNumber: number, message: NativeStatus): void; (error: Error, clientId: number, sequenceNumber: number, message: null): void; }
   /** Function to execute to retrieve the lock status of the vault. */

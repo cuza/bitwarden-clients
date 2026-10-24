@@ -4,6 +4,7 @@
 #import <AuthenticationServices/ASCredentialServiceIdentifier.h>
 #import <AuthenticationServices/ASPasswordCredentialIdentity.h>
 #import <AuthenticationServices/ASPasskeyCredentialIdentity.h>
+#import <AuthenticationServices/ASOneTimeCodeCredentialIdentity.h>
 #import "../../utils.h"
 #import "../../interop.h"
 #import "sync.h"
@@ -36,7 +37,27 @@ void runSync(void* context, NSDictionary *params) {
           initWithServiceIdentifier:serviceId user:username recordIdentifier:cipherId];
 
         [mappedCredentials addObject:passwordIdentity];
-      } 
+      }
+      else if ([type isEqualToString:@"oneTimeCode"]) {
+        if (@available(macos 15, *)) {
+          NSString *cipherId = credential[@"cipherId"];
+          NSString *uri = credential[@"uri"];
+          NSString *label = credential[@"label"];
+
+          // An empty label would be shown as the code's name and may crash macOS, like an empty username.
+          if ([label isKindOfClass:[NSNull class]] || label.length == 0) {
+            NSLog(@"Skipping one-time code, label is empty");
+            continue;
+          }
+
+          ASCredentialServiceIdentifier *serviceId = [[ASCredentialServiceIdentifier alloc]
+            initWithIdentifier:uri type:ASCredentialServiceIdentifierTypeURL];
+          ASOneTimeCodeCredentialIdentity *codeIdentity = [[ASOneTimeCodeCredentialIdentity alloc]
+            initWithServiceIdentifier:serviceId label:label recordIdentifier:cipherId];
+
+          [mappedCredentials addObject:codeIdentity];
+        }
+      }
       else if (@available(macos 14, *)) {
         // Fido2CredentialView uses `userName` (camelCase) while Login uses `username`.
         // This is intentional. Fido2 fields are flattened from the FIDO2 spec's nested structure

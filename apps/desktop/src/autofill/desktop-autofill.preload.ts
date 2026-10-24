@@ -52,6 +52,11 @@ export const DesktopAutofillPreload = {
     AutofillIpcChannelOutgoing.LockStatus,
   ),
 
+  listenLoginCredential: makeListener(
+    AutofillIpcChannelIncoming.LoginCredential,
+    AutofillIpcChannelOutgoing.LoginCredential,
+  ),
+
   listenNativeStatus: makeListener(AutofillIpcChannelIncoming.NativeStatus),
 
   listenPasskeyRegistration: makeListener(

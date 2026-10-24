@@ -136,6 +136,33 @@ describe("Fido2VaultComponent", () => {
       expect(ciphersResult).toHaveLength(2);
       expect(ciphersResult.every((cipher) => !cipher.deletedDate)).toBe(true);
     });
+
+    it("filters by the search text across name, username, and website", () => {
+      const withUri = {
+        ...mockCiphers[2],
+        login: { ...mockCiphers[2].login, uris: [{ uri: "https://bank.example.net" }] },
+      };
+      mockCipherService.cipherListViews$ = jest
+        .fn()
+        .mockReturnValue(of([...mockCiphers.slice(0, 2), withUri]));
+      createComponent();
+
+      let ids: string[] = [];
+      component.ciphers$.subscribe((ciphers) => (ids = ciphers.map((c) => c.id as string)));
+      expect(ids).toEqual(["cipher-1", "cipher-2", "cipher-3"]);
+
+      (component as any).search.setValue("cipher 1");
+      expect(ids).toEqual(["cipher-1"]);
+
+      (component as any).search.setValue("TEST2@");
+      expect(ids).toEqual(["cipher-2"]);
+
+      (component as any).search.setValue("bank.example");
+      expect(ids).toEqual(["cipher-3"]);
+
+      (component as any).search.setValue("  ");
+      expect(ids).toHaveLength(3);
+    });
   });
 
   describe("session", () => {

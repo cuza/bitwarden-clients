@@ -10,7 +10,8 @@ export type AutofillSyncParams = {
   credentials: AutofillCredential[];
 };
 
-export type AutofillCredential = AutofillFido2Credential | AutofillPasswordCredential;
+export type AutofillCredential =
+  AutofillFido2Credential | AutofillPasswordCredential | AutofillOneTimeCodeCredential;
 
 export type AutofillFido2Credential = {
   type: "fido2";
@@ -28,6 +29,14 @@ export type AutofillPasswordCredential = {
   cipherId: string;
   uri: string;
   username: string;
+};
+
+export type AutofillOneTimeCodeCredential = {
+  type: "oneTimeCode";
+  cipherId: string;
+  uri: string;
+  /** Shown to the user to tell codes apart, e.g. the username. */
+  label: string;
 };
 
 export type AutofillSyncResult = AutofillCommandOutput<{

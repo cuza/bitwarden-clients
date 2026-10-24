@@ -4,6 +4,7 @@ uniffi::setup_scaffolding!("autofill_provider");
 
 mod assertion;
 mod lock_status;
+mod login_credential;
 mod registration;
 mod window_handle_query;
 
@@ -41,6 +42,9 @@ pub use crate::{
         PasskeyAssertionWithoutUserInterfaceRequest, PreparePasskeyAssertionCallback,
     },
     lock_status::LockStatusResponse,
+    login_credential::{
+        LoginCredentialRequest, LoginCredentialResponse, PrepareLoginCredentialCallback,
+    },
     registration::{
         PasskeyRegistrationRequest, PasskeyRegistrationResponse, PreparePasskeyRegistrationCallback,
     },
@@ -182,6 +186,7 @@ pub struct ExtensionRequestMessage {
 pub enum ExtensionRequest {
     CancelRequest(String),
     LockStatus,
+    LoginCredential(LoginCredentialRequest),
     NativeStatus(NativeStatus),
     PasskeyAssertion(PasskeyAssertionRequest),
     PasskeyAssertionWithoutUserInterface(PasskeyAssertionWithoutUserInterfaceRequest),
@@ -368,7 +373,8 @@ impl AutofillProviderClient {
                             }
                         },
                         Err(e) => {
-                            error!(error = %e, %message, "Error deserializing message");
+                            // Not the message itself: it can hold a password or one-time code.
+                            error!(error = %e, "Error deserializing message");
                         }
                     };
                 }
@@ -444,6 +450,18 @@ impl AutofillProviderClient {
     ) {
         self.send_request(
             ExtensionRequest::PasskeyAssertionWithoutUserInterface(request),
+            Some(Box::new(callback)),
+        );
+    }
+
+    /// Send a request for the password or one-time code of a login to the desktop client.
+    pub fn prepare_login_credential(
+        &self,
+        request: LoginCredentialRequest,
+        callback: Arc<dyn PrepareLoginCredentialCallback>,
+    ) {
+        self.send_request(
+            ExtensionRequest::LoginCredential(request),
             Some(Box::new(callback)),
         );
     }
@@ -708,8 +726,8 @@ mod tests {
 
     use super::{
         AutofillProviderClient, BitwardenError, ConnectionStatus, ExtensionRequest,
-        ExtensionRequestMessage, PasskeyAssertionRequest, Position, SerializedMessage,
-        TimedCallback, UserVerification, WindowDetails, IPC_PATH,
+        ExtensionRequestMessage, LoginCredentialRequest, PasskeyAssertionRequest, Position,
+        SerializedMessage, TimedCallback, UserVerification, WindowDetails, IPC_PATH,
     };
 
     /// Generates a path for a server and client to connect with.
@@ -844,6 +862,27 @@ mod tests {
             .unwrap();
 
         assert!(response.is_unlocked);
+    }
+
+    #[test]
+    fn test_serialize_login_credential_request() {
+        let message = ExtensionRequestMessage {
+            sequence_number: 7,
+            request: ExtensionRequest::LoginCredential(LoginCredentialRequest {
+                record_identifier: Some("cipher-id".to_string()),
+                service_identifiers: vec!["https://example.com".to_string()],
+                one_time_code: true,
+                client_window: WindowDetails {
+                    position: Position { x: 1, y: 2 },
+                    handle: None,
+                },
+                context: "context".to_string(),
+            }),
+        };
+        let value: Value = serde_json::to_value(&message).unwrap();
+        assert_eq!(value["request"], "loginCredential");
+        assert_eq!(value["params"]["recordIdentifier"], "cipher-id");
+        assert_eq!(value["params"]["oneTimeCode"], true);
     }
 
     #[test]

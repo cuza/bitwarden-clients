@@ -2,9 +2,9 @@
 pub mod autofill {
     use autofill_provider::{
         BitwardenError, ExtensionRequest, ExtensionRequestMessage, LockStatusResponse,
-        NativeStatus, PasskeyAssertionRequest, PasskeyAssertionResponse,
-        PasskeyAssertionWithoutUserInterfaceRequest, PasskeyRegistrationRequest,
-        PasskeyRegistrationResponse, WindowHandleQueryResponse,
+        LoginCredentialRequest, LoginCredentialResponse, NativeStatus, PasskeyAssertionRequest,
+        PasskeyAssertionResponse, PasskeyAssertionWithoutUserInterfaceRequest,
+        PasskeyRegistrationRequest, PasskeyRegistrationResponse, WindowHandleQueryResponse,
     };
     use desktop_core::ipc::server::{Message, MessageType};
     use napi::{
@@ -12,7 +12,7 @@ pub mod autofill {
         threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
     };
     use serde::{de::DeserializeOwned, Deserialize, Serialize};
-    use tracing::error;
+    use tracing::{error, warn};
 
     #[napi]
     pub async fn run_command(value: String) -> napi::Result<String> {
@@ -67,6 +67,17 @@ pub mod autofill {
         }")]
         pub assertion_without_user_interface_callback:
             ThreadsafeFunction<FnArgs<(u32, u32, PasskeyAssertionWithoutUserInterfaceRequest)>>,
+
+        /// Function to execute when a login's password or one-time code is requested.
+        ///
+        /// The `context` field should be stored, as the cancel_request_callback
+        /// will use the same value to identify the request to be cancelled.
+        #[napi(ts_type = "{ \
+            (error: null, clientId: number, sequenceNumber: number, message: LoginCredentialRequest): void; \
+            (error: Error, clientId: number, sequenceNumber: number, message: null): void; \
+        }")]
+        pub login_credential_callback:
+            ThreadsafeFunction<FnArgs<(u32, u32, LoginCredentialRequest)>>,
 
         /// Function to execute when a notification of the autofill provider's status is received.
         #[napi(ts_type = "{ \
@@ -151,6 +162,14 @@ pub mod autofill {
                                 ExtensionRequest::LockStatus => {
                                     let params = (client_id, msg.sequence_number);
                                     callbacks.lock_status_callback.call(
+                                        Ok(params.into()),
+                                        ThreadsafeFunctionCallMode::NonBlocking,
+                                    );
+                                }
+                                ExtensionRequest::LoginCredential(login_credential_request) => {
+                                    let params =
+                                        (client_id, msg.sequence_number, login_credential_request);
+                                    callbacks.login_credential_callback.call(
                                         Ok(params.into()),
                                         ThreadsafeFunctionCallMode::NonBlocking,
                                     );
@@ -259,6 +278,20 @@ pub mod autofill {
         }
 
         #[napi]
+        pub fn complete_login_credential(
+            &self,
+            client_id: u32,
+            sequence_number: u32,
+            response: LoginCredentialResponse,
+        ) -> napi::Result<u32> {
+            let message = PasskeyMessage {
+                sequence_number,
+                value: Ok(response),
+            };
+            self.send(client_id, serde_json::to_string(&message).unwrap())
+        }
+
+        #[napi]
         pub fn complete_lock_status(
             &self,
             client_id: u32,
@@ -330,13 +363,17 @@ pub mod autofill {
             self.send(client_id, serde_json::to_string(&message).unwrap())
         }
 
-        // TODO: Add a way to send a message to a specific client?
-        fn send(&self, _client_id: u32, message: String) -> napi::Result<u32> {
-            self.server
-                .send(message)
-                .map_err(|e| napi::Error::from_reason(format!("Error sending message: {e:?}")))
-                // NAPI doesn't support u64 or usize, so we need to convert to u32
-                .map(|u| u32::try_from(u).unwrap_or_default())
+        /// Sends a response only to the client that made the request, since it can hold a
+        /// password or one-time code. Returns the number of clients it was sent to: 0 if that
+        /// client has gone, such as when the user dismissed the request.
+        fn send(&self, client_id: u32, message: String) -> napi::Result<u32> {
+            match self.server.send_to(client_id, message) {
+                Ok(()) => Ok(1),
+                Err(e) => {
+                    warn!(client_id, error = %e, "Could not send response to client");
+                    Ok(0)
+                }
+            }
         }
     }
 }

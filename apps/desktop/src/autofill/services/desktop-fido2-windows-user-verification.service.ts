@@ -40,6 +40,7 @@ export class DesktopFido2WindowsUserVerificationService extends DesktopFido2User
       registration: "confirmPasskeyRegistrationMfaWindows",
       overwrite: "confirmPasskeyOverwriteMfaWindows",
       assertion: "confirmPasskeyAssertionMfaWindows",
+      autofill: "confirmAutofillLoginWindows",
     }[operation];
   }
 }

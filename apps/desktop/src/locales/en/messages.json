@@ -7289,6 +7289,70 @@
       }
     }
   },
+  "confirmAutofillLoginMacOS": {
+    "message": "autofill $USERNAME$ for $RPID$",
+    "description": "Prompt to fill a saved login into another app. Shown in macOS Touch ID prompt as \"Bitwarden is trying to {message}.\", so it should omit capitalization and ending punctuation.",
+    "placeholders": {
+      "rpId": {
+        "content": "$1",
+        "example": "example.com"
+      },
+      "username": {
+        "content": "$2",
+        "example": "user@acme.com"
+      }
+    }
+  },
+  "confirmAutofillLoginWindows": {
+    "message": "Verify it's you to autofill $USERNAME$ for $RPID$.",
+    "description": "Prompt in Windows Hello to fill a saved login into another app.",
+    "placeholders": {
+      "rpId": {
+        "content": "$1",
+        "example": "example.com"
+      },
+      "username": {
+        "content": "$2",
+        "example": "user@acme.com"
+      }
+    }
+  },
+  "chooseLoginToAutofill": {
+    "message": "Choose a login to autofill"
+  },
+  "autofillLogin": {
+    "message": "Autofill login"
+  },
+  "noLoginsFoundToAutofill": {
+    "message": "No logins found that can be autofilled here."
+  },
+  "saveVerificationCode": {
+    "message": "Save verification code"
+  },
+  "saveVerificationCodeDesc": {
+    "message": "Choose where to save the verification code for $NAME$.",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "Example – alice@example.com"
+      }
+    }
+  },
+  "saveTo": {
+    "message": "Save to"
+  },
+  "newLoginItem": {
+    "message": "New login"
+  },
+  "replaceVerificationCodeWarning": {
+    "message": "This login already has a verification code. Saving will replace it."
+  },
+  "requireTouchIdForAutofill": {
+    "message": "Require Touch ID to autofill in other apps"
+  },
+  "requireTouchIdForAutofillDesc": {
+    "message": "Verify it's you before Bitwarden fills a password or verification code into another app, even while your vault is unlocked."
+  },
   "permissions": {
     "message": "Permissions"
   },

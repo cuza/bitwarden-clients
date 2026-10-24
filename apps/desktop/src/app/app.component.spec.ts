@@ -50,6 +50,8 @@ import { KeyService, BiometricStateService } from "@bitwarden/key-management";
 import { LegacyCompatKeyService } from "@bitwarden/legacy-crypto";
 import { LockService } from "@bitwarden/unlock";
 
+import { DesktopTotpSetupService } from "../vault/app/totp-setup/desktop-totp-setup.service";
+
 import { AppComponent } from "./app.component";
 import { ImportDesktopComponent } from "./tools/import/import-desktop.component";
 
@@ -112,6 +114,10 @@ describe("AppComponent (desktop)", () => {
     deviceTrustToastService.setupListeners$ = EMPTY;
     const documentLangSetter = mock<DocumentLangSetter>();
     documentLangSetter.start.mockReturnValue({ unsubscribe: jest.fn() } as any);
+
+    TestBed.configureTestingModule({
+      providers: [{ provide: DesktopTotpSetupService, useValue: mock<DesktopTotpSetupService>() }],
+    });
 
     // The constructor calls `takeUntilDestroyed()`, which requires an injection context.
     component = TestBed.runInInjectionContext(

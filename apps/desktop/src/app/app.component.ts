@@ -1,6 +1,6 @@
 // FIXME: Update this file to be type safe and remove this and next line
 // @ts-strict-ignore
-import { Component, DestroyRef, NgZone, OnDestroy, OnInit } from "@angular/core";
+import { Component, DestroyRef, inject, NgZone, OnDestroy, OnInit } from "@angular/core";
 import { takeUntilDestroyed, toSignal } from "@angular/core/rxjs-interop";
 import { Router } from "@angular/router";
 import { filter, firstValueFrom, lastValueFrom, map, Subject, takeUntil, timeout } from "rxjs";
@@ -69,6 +69,7 @@ import { DeviceManagementDialogComponent } from "../auth/device-management/devic
 import { ChangePasswordDialogComponent } from "../auth/password-management/change-password-dialog.component";
 import { MenuAccount, MenuUpdateRequest } from "../main/menu/menu.updater";
 import { SSO_COOKIE_VENDOR_CALLBACK_COMMAND } from "../platform/services/server-communication-config/server-communication-config-platform-api.service";
+import { DesktopTotpSetupService } from "../vault/app/totp-setup/desktop-totp-setup.service";
 
 import { SettingsDialogComponent } from "./accounts/settings-dialog.component";
 import { ExportDesktopComponent } from "./tools/export/export-desktop.component";
@@ -103,6 +104,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private shouldRerunAuthRequestProcessing = false;
 
   private destroy$ = new Subject<void>();
+  private readonly totpSetupService = inject(DesktopTotpSetupService);
 
   private accountCleanUpInProgress: { [userId: string]: boolean } = {};
 
@@ -534,6 +536,8 @@ export class AppComponent implements OnInit, OnDestroy {
         }
       });
     });
+    // Links that arrived before this listener existed, such as the one that launched the app.
+    this.messagingService.send("deepLinkListenerReady");
 
     void this.resolveActiveAccount();
   }
@@ -897,6 +901,11 @@ export class AppComponent implements OnInit, OnDestroy {
 
   // Process the sso callback links
   private processDeepLink(urlString: string) {
+    if (urlString.startsWith("otpauth://")) {
+      void this.totpSetupService.saveFromLink(urlString);
+      return;
+    }
+
     // Handle SSO cookie vendor callback
     if (urlString.indexOf("bitwarden://sso-cookie-vendor") === 0) {
       this.messagingService.send(SSO_COOKIE_VENDOR_CALLBACK_COMMAND, { urlString });
