@@ -314,8 +314,8 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
      For now we just claim to always need UI displayed.
      */
     override func provideCredentialWithoutUserInteraction(for credentialRequest: any ASCredentialRequest) {
-       let error = ASExtensionError(.userInteractionRequired)
-       self.extensionContext.cancelRequest(withError: error)
+       // Passkey, password and one-time code requests are all handled with UI.
+       self.extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
        return
     }
 

@@ -43,7 +43,6 @@ import {
 import {
   InternalUserDecryptionOptionsServiceAbstraction,
   LoginEmailService,
-  LogoutService,
 } from "@bitwarden/auth/common";
 import { AutomationCapability, ProcessReloadCapability } from "@bitwarden/automation-driver";
 import { ApiService } from "@bitwarden/common/abstractions/api.service";
@@ -62,6 +61,7 @@ import { MasterPasswordApiService } from "@bitwarden/common/auth/abstractions/ma
 import { SsoLoginServiceAbstraction } from "@bitwarden/common/auth/abstractions/sso-login.service.abstraction";
 import { WebAuthnLoginPrfKeyServiceAbstraction } from "@bitwarden/common/auth/abstractions/webauthn/webauthn-login-prf-key.service.abstraction";
 import { DeepLinkRedirectService } from "@bitwarden/common/auth/deep-link-redirect";
+import { LogoutService } from "@bitwarden/common/auth/logout";
 import {
   DefaultOrganizationInviteService,
   OrganizationInviteService,
@@ -152,6 +152,7 @@ import {
 import { OrganizationInviteLinkApiService } from "@bitwarden/organization-invite-link";
 import { SerializedMemoryStorageService } from "@bitwarden/storage-core";
 import {
+  CipherShareAccessService,
   SHARE_ITEM_PRESENTER,
   SHARE_PASSWORD_REPROMPT,
   ShareButtonComponent,
@@ -159,6 +160,7 @@ import {
 } from "@bitwarden/tools-share";
 import { LockService, UnlockService } from "@bitwarden/unlock";
 import {
+  CIPHER_SHARE_ACCESS,
   CipherFormGenerationService,
   DefaultSshImportPromptService,
   DefaultVaultNavService,
@@ -634,6 +636,11 @@ const safeProviders: SafeProvider[] = [
   safeProvider({
     provide: SHARE_ITEM_ENTRY_POINT,
     useValue: ShareButtonComponent,
+  }),
+  safeProvider({
+    provide: CIPHER_SHARE_ACCESS,
+    useExisting: CipherShareAccessService,
+    deps: [],
   }),
   safeProvider({
     provide: VFO1_WALKTHROUGH_STEPS,

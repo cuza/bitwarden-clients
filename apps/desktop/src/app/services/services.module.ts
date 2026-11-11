@@ -34,7 +34,6 @@ import {
 import {
   InternalUserDecryptionOptionsServiceAbstraction,
   LoginEmailService,
-  SsoUrlService,
 } from "@bitwarden/auth/common";
 import {
   AutomationCapability,
@@ -63,6 +62,7 @@ import { SsoLoginServiceAbstraction } from "@bitwarden/common/auth/abstractions/
 import { TokenService } from "@bitwarden/common/auth/abstractions/token.service";
 import { WebAuthnLoginPrfKeyServiceAbstraction } from "@bitwarden/common/auth/abstractions/webauthn/webauthn-login-prf-key.service.abstraction";
 import { PendingAuthRequestsStateService } from "@bitwarden/common/auth/services/auth-request-answering/pending-auth-requests.state";
+import { SsoUrlService } from "@bitwarden/common/auth/sso-login";
 import { AutofillSettingsServiceAbstraction } from "@bitwarden/common/autofill/services/autofill-settings.service";
 import { DomainSettingsService } from "@bitwarden/common/autofill/services/domain-settings.service";
 import { BillingAccountProfileStateService } from "@bitwarden/common/billing/abstractions";
@@ -106,6 +106,7 @@ import {
 import { RegisterSdkService } from "@bitwarden/common/platform/abstractions/sdk/register-sdk.service";
 import { SdkClientFactory } from "@bitwarden/common/platform/abstractions/sdk/sdk-client-factory";
 import { SdkLoadService } from "@bitwarden/common/platform/abstractions/sdk/sdk-load.service";
+import { SdkService } from "@bitwarden/common/platform/abstractions/sdk/sdk.service";
 import { StateService as StateServiceAbstraction } from "@bitwarden/common/platform/abstractions/state.service";
 import { AbstractStorageService } from "@bitwarden/common/platform/abstractions/storage.service";
 import { SystemService as SystemServiceAbstraction } from "@bitwarden/common/platform/abstractions/system.service";
@@ -154,12 +155,14 @@ import {
 import { FlightRecorderLogRecorderService } from "@bitwarden/logging-angular";
 import { SerializedMemoryStorageService } from "@bitwarden/storage-core";
 import {
+  CipherShareAccessService,
   SHARE_ITEM_PRESENTER,
   SHARE_PASSWORD_REPROMPT,
   ShareButtonComponent,
 } from "@bitwarden/tools-share";
 import { LockService, UnlockService } from "@bitwarden/unlock";
 import {
+  CIPHER_SHARE_ACCESS,
   CipherFormGenerationService,
   DefaultSshImportPromptService,
   DefaultVaultNavService,
@@ -184,6 +187,7 @@ import { DesktopAuthRequestAnsweringService } from "../../auth/services/auth-req
 import { DesktopTwoFactorAuthDuoComponentService } from "../../auth/services/desktop-two-factor-auth-duo-component.service";
 import { DesktopAutofillSettingsService } from "../../autofill/services/desktop-autofill-settings.service";
 import { DesktopAutofillService } from "../../autofill/services/desktop-autofill.service";
+import { DesktopAutotypeGaPolicyService } from "../../autofill/services/desktop-autotype-ga-policy.service";
 import { DesktopAutotypeMvpService } from "../../autofill/services/desktop-autotype-mvp.service";
 import { DesktopAutotypeDefaultSettingPolicy } from "../../autofill/services/desktop-autotype-policy.service";
 import { DesktopAutotypeService } from "../../autofill/services/desktop-autotype.service";
@@ -450,10 +454,13 @@ const safeProviders: SafeProvider[] = [
       StateProvider,
       AccountCryptographicStateService,
       BiometricsService,
+      SdkService,
     ],
   }),
   safeProvider({
     provide: DesktopSettingsService,
+    useFactory: (stateProvider: StateProvider) =>
+      new DesktopSettingsService(stateProvider, ipc.platform.isMacAppStore),
     deps: [StateProvider],
   }),
   safeProvider({
@@ -688,6 +695,18 @@ const safeProviders: SafeProvider[] = [
       GlobalStateProvider,
       PlatformUtilsServiceAbstraction,
       BillingAccountProfileStateService,
+      DesktopAutotypeGaPolicyService,
+      LogService,
+    ],
+  }),
+  safeProvider({
+    provide: DesktopAutotypeGaPolicyService,
+    useClass: DesktopAutotypeGaPolicyService,
+    deps: [
+      AccountServiceAbstraction,
+      AuthServiceAbstraction,
+      PolicyServiceAbstraction,
+      ConfigService,
     ],
   }),
   // Autotype MVP only: must only be consumed within the Autotype MVP scope
@@ -799,6 +818,11 @@ const safeProviders: SafeProvider[] = [
   safeProvider({
     provide: SHARE_ITEM_ENTRY_POINT,
     useValue: ShareButtonComponent,
+  }),
+  safeProvider({
+    provide: CIPHER_SHARE_ACCESS,
+    useExisting: CipherShareAccessService,
+    deps: [],
   }),
   safeProvider({
     provide: SHARE_PASSWORD_REPROMPT,
